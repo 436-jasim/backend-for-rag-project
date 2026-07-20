@@ -1,0 +1,39 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs and runtime output
+logs/
+*.log
+
+# Local data and caches
+data/
+vectordb/
+*.sqlite3
+*.db
+*.pkl
+*.index
+faiss_index/
+chroma_db/
+
+# Temporary backend upload files
+tmp-upload-*.txt
+*.tmp
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
