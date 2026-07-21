@@ -19,7 +19,6 @@ logs/
 *.log
 
 # Local data and caches
-data/
 vectordb/
 *.sqlite3
 *.db
