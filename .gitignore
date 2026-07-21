@@ -18,14 +18,6 @@ ENV/
 logs/
 *.log
 
-# Local data and caches
-vectordb/
-*.sqlite3
-*.db
-*.pkl
-*.index
-faiss_index/
-chroma_db/
 
 # Temporary backend upload files
 tmp-upload-*.txt
