@@ -18,6 +18,8 @@ ENV/
 logs/
 *.log
 
+#dataset
+data/
 
 # Temporary backend upload files
 tmp-upload-*.txt
