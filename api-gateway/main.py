@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from bson import ObjectId
-import httpx
-import os
+import importlib.util
+from pathlib import Path
 
 # Import the authentication router
 from auth_routes import router as auth_router
@@ -13,6 +13,22 @@ from shared.database import (
     get_recent_chat_history
 )
 from shared.security import verify_token
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RETRIEVAL_SERVICE_PATH = PROJECT_ROOT / "services" / "retrieval-service" / "main.py"
+
+
+def _load_service_module(module_name: str, module_path: Path):
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load service module from {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+retrieval_service = _load_service_module("retrieval_service_main", RETRIEVAL_SERVICE_PATH)
 
 app = FastAPI(title="RAG API Gateway")
 
@@ -26,6 +42,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "https://frontend-for-rag-project.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -35,9 +52,10 @@ app.add_middleware(
 # Register the Authentication Router (/auth/login, /auth/signup, /auth/me)
 app.include_router(auth_router)
 
-INGESTION_SERVICE_URL = os.getenv("INGESTION_SERVICE_URL", "http://127.0.0.1:8002")
-RETRIEVAL_SERVICE_URL = os.getenv("RETRIEVAL_SERVICE_URL", "http://127.0.0.1:8003")
-EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL", "http://127.0.0.1:8004")
+
+@app.on_event("startup")
+async def startup_restore_retrieval_context():
+    await retrieval_service.startup_restore_global_context()
 
 @app.get("/")
 async def root() -> dict:
@@ -48,16 +66,9 @@ async def root() -> dict:
 async def proxy_upload(
     file: UploadFile = File(...),
     session_id: str | None = Form(None),
+    request: Request = None,
 ):
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        file_bytes = await file.read()
-        files = {"file": (file.filename, file_bytes, file.content_type)}
-        data = {"session_id": session_id} if session_id else {}
-
-        response = await client.post(f"{RETRIEVAL_SERVICE_URL}/upload", files=files, data=data)
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.json().get("detail"))
-        return response.json()
+    return await retrieval_service.upload_file(file=file, session_id=session_id, request=request)
 
 
 # Forward Image/PDF Upload to Retrieval Service (OCR + RAG chain update)
@@ -65,16 +76,9 @@ async def proxy_upload(
 async def proxy_img_upload(
     file: UploadFile = File(...),
     session_id: str | None = Form(None),
+    request: Request = None,
 ):
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        file_bytes = await file.read()
-        files = {"file": (file.filename, file_bytes, file.content_type)}
-        data = {"session_id": session_id} if session_id else {}
-
-        response = await client.post(f"{RETRIEVAL_SERVICE_URL}/img_upload", files=files, data=data)
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.json().get("detail"))
-        return response.json()
+    return await retrieval_service.upload_image(file=file, session_id=session_id, request=request)
 
 
 # Forward Chat Request to Retrieval Service & Persist Chat
@@ -94,26 +98,9 @@ async def chat_endpoint(request: Request):
     if not message or not session_id:
         raise HTTPException(status_code=422, detail="Both 'message' and 'session_id' are required.")
 
-    # Forward to Retrieval Microservice
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            res = await client.post(
-                f"{RETRIEVAL_SERVICE_URL}/retrieve",
-                json={"message": message, "session_id": session_id, "user_id": user_id or "unknown"}
-            )
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503, detail="Retrieval service is not running.")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Retrieval service timed out.")
-
-    if res.status_code != 200:
-        try:
-            detail = res.json().get("detail")
-        except Exception:
-            detail = res.text
-        raise HTTPException(status_code=res.status_code, detail=detail)
-
-    data = res.json()
+    data = await retrieval_service.retrieve_answer(
+        {"message": message, "session_id": session_id, "user_id": user_id or "unknown"}
+    )
     answer = data.get("answer")
 
     # Persist chat history in DB
@@ -124,22 +111,7 @@ async def chat_endpoint(request: Request):
 
 @app.post("/reset-to-default")
 async def proxy_reset_to_default():
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            res = await client.post(f"{RETRIEVAL_SERVICE_URL}/reset-to-default")
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503, detail="Retrieval service is not running.")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Retrieval service timed out.")
-
-    if res.status_code != 200:
-        try:
-            detail = res.json().get("detail")
-        except Exception:
-            detail = res.text
-        raise HTTPException(status_code=res.status_code, detail=detail)
-
-    return res.json()
+    return await retrieval_service.reset_to_default()
 
 
 # Chat Session Management Endpoints

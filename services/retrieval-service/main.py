@@ -33,7 +33,10 @@ async def startup_restore_global_context():
     restored = await rag.restore_global_context_from_db()
     if not restored and DEFAULT_DATASET_PATH.exists():
         print(f"No persisted context found — loading default dataset: {DEFAULT_DATASET_PATH}")
-        await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH))
+        try:
+            await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH))
+        except Exception as exc:
+            print("Warning: Failed to initialize default RAG context on startup:", exc)
     elif not restored:
         print("Warning: No persisted context and default dataset not found. Upload a file to use RAG.")
 
