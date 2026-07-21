@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from bson import ObjectId
 import importlib.util
 from pathlib import Path
+from contextlib import asynccontextmanager
+from shared.database import test_connection
 
 # Import the authentication router
 from auth_routes import router as auth_router
@@ -30,9 +32,17 @@ def _load_service_module(module_name: str, module_path: Path):
 
 retrieval_service = _load_service_module("retrieval_service_main", RETRIEVAL_SERVICE_PATH)
 
-app = FastAPI(title="RAG API Gateway")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize all gateway dependencies before accepting requests."""
+    await test_connection()
+    await retrieval_service.startup_restore_global_context()
+    yield
 
-# Enable CORS for frontend applications
+
+app = FastAPI(title="RAG API Gateway", lifespan=lifespan)
+
+# Enable CORS for frontend applications.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -49,13 +59,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register the Authentication Router (/auth/login, /auth/signup, /auth/me)
+# Register the Authentication Router (/auth/login, /auth/signup, /auth/me).
 app.include_router(auth_router)
-
-
-@app.on_event("startup")
-async def startup_restore_retrieval_context():
-    await retrieval_service.startup_restore_global_context()
 
 @app.get("/")
 async def root() -> dict:
