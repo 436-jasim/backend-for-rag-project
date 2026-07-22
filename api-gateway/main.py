@@ -53,6 +53,7 @@ app.add_middleware(
         "http://localhost:5174",
         "http://127.0.0.1:5174",
         "https://frontend-for-rag-project.vercel.app",
+        "https://vercel.com/alvi67/frontend-for-rag-project/3AiQGc7sRPw7hc3M7eLhf7K3BkzY",
     ],
     allow_credentials=True,
     allow_methods=["*"],
