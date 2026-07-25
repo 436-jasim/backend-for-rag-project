@@ -78,21 +78,15 @@ else:
         "http://127.0.0.1:5174",
     ]
 
-allow_origin_regex = os.getenv("CORS_ORIGIN_REGEX")
-if not allow_origin_regex:
-    allow_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$"
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 print("CORS middleware loaded")
 print("allowed_origins:", allowed_origins)
-print("allow_origin_regex:", allow_origin_regex)
 # Register the Authentication Router (/auth/login, /auth/signup, /auth/me).
 app.include_router(auth_router)
 
