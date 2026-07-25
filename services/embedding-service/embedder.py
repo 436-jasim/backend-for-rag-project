@@ -15,11 +15,35 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 VECTORDB_ROOT = PROJECT_ROOT / "vectordb"
 
 
-def build_vectorstore_path(file_path: str) -> Path:
-    """Build a stable, file-specific folder under the local vectordb directory for persistent FAISS storage."""
-    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(file_path).stem)
-    digest = hashlib.md5(str(Path(file_path).resolve()).encode("utf-8")).hexdigest()[:8]
+def build_vectorstore_path(file_path: str, source_name: str | None = None) -> Path:
+    """Build a stable, file-specific folder under the local vectordb directory for persistent FAISS storage.
+
+    If `source_name` is provided, it is used (sanitized) to build a stable store name
+    so re-uploads with the same original filename reuse the same vectorstore.
+    Otherwise fall back to using the resolved file path digest (legacy behavior).
+    """
+    if source_name:
+        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(source_name).stem)
+        digest = hashlib.md5(safe_stem.encode("utf-8")).hexdigest()[:8]
+    else:
+        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(file_path).stem)
+        digest = hashlib.md5(str(Path(file_path).resolve()).encode("utf-8")).hexdigest()[:8]
+
     return VECTORDB_ROOT / f"{safe_stem}_{digest}"
+
+
+def _find_existing_vectorstore_by_source(source_name: str) -> Path | None:
+    """Return an existing vectorstore Path matching a sanitized `source_name`, if present."""
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(source_name).stem)
+    pattern = f"{safe_stem}_*"
+    if not VECTORDB_ROOT.exists():
+        return None
+
+    for candidate in VECTORDB_ROOT.glob(pattern):
+        if (candidate / "index.faiss").exists() and (candidate / "index.pkl").exists():
+            return candidate
+
+    return None
 
 
 def _get_embeddings(local_files_only: bool = False) -> HuggingFaceEmbeddings:
@@ -30,9 +54,21 @@ def _get_embeddings(local_files_only: bool = False) -> HuggingFaceEmbeddings:
     )
 
 
-def create_vectorstore(file_path: str, docs: list[str], source_type: str) -> tuple[FAISS, Path]:
+def create_vectorstore(file_path: str, docs: list[str], source_type: str, source_name: str | None = None) -> tuple[FAISS, Path]:
     """Turn cleaned text chunks into a persisted FAISS store with metadata."""
-    vectorstore_path = build_vectorstore_path(file_path)
+    # If a source_name is provided, prefer an existing store that matches its sanitized name.
+    if source_name:
+        existing = _find_existing_vectorstore_by_source(source_name)
+        if existing is not None:
+            embeddings = _get_embeddings(local_files_only=True)
+            vectorstore = FAISS.load_local(
+                str(existing),
+                embeddings,
+                allow_dangerous_deserialization=True,
+            )
+            return vectorstore, existing
+
+    vectorstore_path = build_vectorstore_path(file_path, source_name=source_name)
 
     if (vectorstore_path / "index.faiss").exists() and (vectorstore_path / "index.pkl").exists():
         embeddings = _get_embeddings(local_files_only=True)

@@ -25,16 +25,23 @@ from shared.security import verify_token
 
 app = FastAPI(title="Laptop RAG API")
 
+# FIXED PATH: Points to /data/dataset.csv relative to project root
+# (goes up two directory levels from services/retrieval-service/main.py)
+DEFAULT_DATASET_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "dataset.csv"
+
 @app.on_event("startup")
 async def startup_restore_global_context():
     """Attempt to restore previously uploaded context from MongoDB.
     If nothing is stored there, fall back to the bundled default dataset
-    so the service is immediately usable for laptop queries."""
+    so the service is immediately usable for laptop queries.
+    
+    The initialize_rag_system now checks for existing embeddings first
+    before extracting and creating new ones."""
     restored = await rag.restore_global_context_from_db()
     if not restored and DEFAULT_DATASET_PATH.exists():
-        print(f"No persisted context found — loading default dataset: {DEFAULT_DATASET_PATH}")
+        print(f"No persisted context found — initializing default dataset: {DEFAULT_DATASET_PATH}")
         try:
-            await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH))
+            await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH), DEFAULT_DATASET_PATH.name)
         except Exception as exc:
             print("Warning: Failed to initialize default RAG context on startup:", exc)
     elif not restored:
@@ -52,10 +59,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# FIXED PATH: Points to /data/dataset.csv relative to project root
-# (goes up two directory levels from services/retrieval-service/main.py)
-DEFAULT_DATASET_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "dataset.csv"
 
 
 @app.get("/")
@@ -87,7 +90,7 @@ async def retrieve_answer(payload: dict):
     if rag.conversational_router_chain is None:
         restored = await rag.restore_global_context_from_db()
         if not restored:
-            await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH))
+            await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH), DEFAULT_DATASET_PATH.name)
 
     answer = await asyncio.to_thread(rag.rag_answer, message, session_id)
     return {"answer": answer}
@@ -150,7 +153,7 @@ async def upload_image(
             }
 
         # Global OCR uploads remain a reusable app-wide context file.
-        await asyncio.to_thread(rag.initialize_rag_system, str(tmp_path))
+        await asyncio.to_thread(rag.initialize_rag_system, str(tmp_path), file.filename)
 
         if rag.conversational_router_chain is None:
             raise HTTPException(
@@ -229,7 +232,7 @@ async def upload_file(
             return {"status": "success", "message": f"Successfully attached {file.filename} to this chat session."}
 
         # Global context upload: rebuild the reusable app-wide dataset and persist the active file to MongoDB.
-        await asyncio.to_thread(rag.initialize_rag_system, str(tmp_path))
+        await asyncio.to_thread(rag.initialize_rag_system, str(tmp_path), file.filename)
         if rag.conversational_router_chain is None:
             raise HTTPException(
                 status_code=500,
@@ -254,7 +257,7 @@ async def reset_to_default():
 
     try:
         await clear_active_global_context()
-        await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH))
+        await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH), DEFAULT_DATASET_PATH.name)
         return {"status": "success", "message": "Reverted to default dataset and dropped the active global context file."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

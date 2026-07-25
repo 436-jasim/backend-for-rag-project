@@ -2,10 +2,14 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from bson import ObjectId
 import importlib.util
+import os
 from pathlib import Path
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
+from dotenv import load_dotenv
 from shared.database import test_connection
 
+load_dotenv()
 # Import the authentication router
 from auth_routes import router as auth_router
 
@@ -30,6 +34,8 @@ def _load_service_module(module_name: str, module_path: Path):
     return module
 
 
+load_dotenv()
+
 retrieval_service = _load_service_module("retrieval_service_main", RETRIEVAL_SERVICE_PATH)
 
 @asynccontextmanager
@@ -43,23 +49,50 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RAG API Gateway", lifespan=lifespan)
 
 # Enable CORS for frontend applications.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+_frontend_urls = os.getenv("FRONTEND_URLS")
+if _frontend_urls:
+    allowed_origins = []
+    for raw in _frontend_urls.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        if raw.startswith("http://") or raw.startswith("https://"):
+            parsed = urlparse(raw)
+            if parsed.scheme and parsed.netloc:
+                origin = f"{parsed.scheme}://{parsed.netloc}"
+                if origin not in allowed_origins:
+                    allowed_origins.append(origin)
+            else:
+                if raw not in allowed_origins:
+                    allowed_origins.append(raw)
+        else:
+            if raw not in allowed_origins:
+                allowed_origins.append(raw)
+else:
+    allowed_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
-        "https://frontend-for-rag-project.vercel.app",
-        "https://vercel.com/alvi67/frontend-for-rag-project/3AiQGc7sRPw7hc3M7eLhf7K3BkzY",
-    ],
+    ]
+
+allow_origin_regex = os.getenv("CORS_ORIGIN_REGEX")
+if not allow_origin_regex:
+    allow_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+print("CORS middleware loaded")
+print("allowed_origins:", allowed_origins)
+print("allow_origin_regex:", allow_origin_regex)
 # Register the Authentication Router (/auth/login, /auth/signup, /auth/me).
 app.include_router(auth_router)
 

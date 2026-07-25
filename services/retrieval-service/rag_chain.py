@@ -42,6 +42,55 @@ _last_vectorstore_path = None
 _last_docs = None
 _last_file_name = None
 
+# Constants for vectordb paths
+VECTORDB_ROOT = PROJECT_ROOT / "vectordb"
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def _find_existing_vectorstore_for_file(file_name: str) -> Path | None:
+    """Find an existing vectorstore by file name without re-extracting."""
+    import hashlib
+    
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(file_name).stem)
+    pattern = f"{safe_stem}_*"
+    
+    if not VECTORDB_ROOT.exists():
+        return None
+
+    for candidate in VECTORDB_ROOT.glob(pattern):
+        if (candidate / "index.faiss").exists() and (candidate / "index.pkl").exists():
+            print(f"Found existing vectorstore: {candidate}")
+            return candidate
+
+    return None
+
+
+def load_vectorstore_from_path(vectorstore_path: Path | str) -> FAISS | None:
+    """Load a pre-existing FAISS vectorstore without re-extracting."""
+    vectorstore_path = Path(vectorstore_path)
+    
+    if not vectorstore_path.exists():
+        return None
+    
+    if not (vectorstore_path / "index.faiss").exists() or not (vectorstore_path / "index.pkl").exists():
+        return None
+    
+    try:
+        embeddings = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            model_kwargs={"local_files_only": True}
+        )
+        vectorstore = FAISS.load_local(
+            str(vectorstore_path),
+            embeddings,
+            allow_dangerous_deserialization=True,
+        )
+        print(f"Successfully loaded vectorstore from {vectorstore_path}")
+        return vectorstore
+    except Exception as e:
+        print(f"Failed to load vectorstore from {vectorstore_path}: {e}")
+        return None
+
 
 def process_laptop_answer(answer_text: str) -> str:
     """Removes duplicate laptop-name entries from a retrieved answer while preserving order."""
@@ -280,10 +329,10 @@ Context:
     print(f"Successfully loaded {file_name} into the pipeline!\n")
 
 
-def initialize_rag_system(file_path: str):
+def initialize_rag_system(file_path: str, source_name: str | None = None):
     """
-    Accepts any supported file, wipes the previous index/memory completely,
-    and spins up a new RAG pipeline for the newly uploaded file.
+    Initialize the RAG system. First attempts to load existing embeddings from the filesystem.
+    If embeddings don't exist, extracts text and creates new embeddings.
 
     NOTE: Does NOT persist to MongoDB (no async DB calls). The caller
     should call ``persist_global_context()`` separately on the main event loop.
@@ -298,12 +347,27 @@ def initialize_rag_system(file_path: str):
     uploaded_rag_chain = None
     global_rag_chain = None
 
-    print(f"Processing newly uploaded file: {file_path}...")
-    current_dataset_name = Path(file_path).name
-    is_default_dataset = current_dataset_name.lower() == "dataset.csv"
+    print(f"Processing file: {file_path}...")
+    file_name = Path(file_path).name
+    is_default_dataset = file_name.lower() == "dataset.csv"
     current_dataset_type = "default" if is_default_dataset else "uploaded"
-    _last_file_name = current_dataset_name
+    current_dataset_name = file_name
+    _last_file_name = file_name
 
+    # First, try to load existing embeddings without re-extracting
+    use_source_name = source_name or file_name
+    existing_vectorstore_path = _find_existing_vectorstore_for_file(use_source_name)
+    
+    if existing_vectorstore_path:
+        vectorstore = load_vectorstore_from_path(existing_vectorstore_path)
+        if vectorstore is not None:
+            print(f"Loaded existing embeddings from {existing_vectorstore_path}")
+            _last_vectorstore_path = str(existing_vectorstore_path)
+            _build_rag_chain_from_vectorstore(vectorstore, file_name, current_dataset_type)
+            return
+
+    # If no existing embeddings, extract text and build new ones
+    print(f"No existing embeddings found. Extracting text from {file_path}...")
     docs = extract_text_from_file(file_path)
     docs = [clean_ocr_text(doc) for doc in docs if clean_ocr_text(doc)]
     docs = list(dict.fromkeys(docs))
@@ -313,7 +377,11 @@ def initialize_rag_system(file_path: str):
         return
 
     print(f"Building Vector Embeddings for {len(docs)} text segments...")
-    vectorstore, vectorstore_path = build_index(file_path=file_path, source_type=current_dataset_type)
+    # Prefer a stable source name (original filename) when available so re-uploads
+    # reuse previously persisted embeddings instead of creating a new index folder.
+    vectorstore, vectorstore_path = build_index(
+        file_path=file_path, source_type=current_dataset_type, source_name=source_name
+    )
     if vectorstore is None or vectorstore_path is None:
         print("Warning: Failed to build persisted vector index.")
         return
@@ -347,6 +415,7 @@ async def persist_global_context():
 
 async def restore_global_context_from_db():
     """Restore the persisted global uploaded context from MongoDB and make it available to all chats.
+    Uses optimized loading that skips re-extraction of text.
 
     This is an async function because get_active_global_context() uses Motor
     (async MongoDB driver).  Callers must ``await`` it directly — do NOT wrap
@@ -366,18 +435,20 @@ async def restore_global_context_from_db():
 
     vectorstore_path = Path(context_doc["vectorstore_path"])
     if not vectorstore_path.exists():
+        print(f"Vectorstore path does not exist: {vectorstore_path}")
         return False
 
-    try:
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.load_local(str(vectorstore_path), embeddings, allow_dangerous_deserialization=True)
-        current_dataset_name = context_doc.get("file_name", vectorstore_path.name)
-        current_dataset_type = "uploaded"
-        _build_rag_chain_from_vectorstore(vectorstore, current_dataset_name, current_dataset_type)
-        return True
-    except Exception as exc:
-        print("Warning: Failed to restore persisted global context vectorstore:", exc)
+    # Use the optimized loader that doesn't require re-extraction
+    vectorstore = load_vectorstore_from_path(vectorstore_path)
+    if vectorstore is None:
+        print("Warning: Failed to load vectorstore from path")
         return False
+
+    current_dataset_name = context_doc.get("file_name", vectorstore_path.name)
+    current_dataset_type = "uploaded"
+    _build_rag_chain_from_vectorstore(vectorstore, current_dataset_name, current_dataset_type)
+    print(f"Successfully restored global context: {current_dataset_name}")
+    return True
 
 
 def rag_answer(question: str, session_id: str) -> str:

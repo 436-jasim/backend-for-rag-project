@@ -24,7 +24,7 @@ _embedder_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_embedder_module)
 
 
-def build_index(file_path: str, source_type: str, docs: list[str] | None = None):
+def build_index(file_path: str, source_type: str, docs: list[str] | None = None, source_name: str | None = None):
     """Build a persisted FAISS index using the repository's embedded helper module."""
     if docs is None:
         docs = extract_text_from_file(file_path)
@@ -39,4 +39,5 @@ def build_index(file_path: str, source_type: str, docs: list[str] | None = None)
         file_path=file_path,
         docs=cleaned_docs,
         source_type=source_type,
+        source_name=source_name,
     )

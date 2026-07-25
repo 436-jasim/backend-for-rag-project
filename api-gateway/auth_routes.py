@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
+from shared.email_service import send_welcome_email
 
 # Import your helper functions from the shared security package
 from shared.security import (
@@ -67,6 +68,11 @@ async def signup(user_data: UserSignup):
     except Exception as e:
         # If updating the document fails, keep going but log the warning (email/username remain)
         print("Warning: failed to set canonical user_id:", e)
+
+    try:
+        send_welcome_email(str(user_data.email), user_data.username)
+    except Exception as e:
+        print("Warning: failed to send welcome email:", e)
 
     return {"status": "success", "message": "User registered successfully!"}
 

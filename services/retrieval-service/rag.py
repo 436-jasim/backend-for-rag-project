@@ -23,8 +23,8 @@ default_rag_chain = rag_chain.default_rag_chain
 uploaded_rag_chain = rag_chain.uploaded_rag_chain
 
 
-def initialize_rag_system(file_path: str):
-    rag_chain.initialize_rag_system(file_path)
+def initialize_rag_system(file_path: str, source_name: str | None = None):
+    rag_chain.initialize_rag_system(file_path, source_name=source_name)
     globals()["conversational_router_chain"] = rag_chain.conversational_router_chain
     globals()["memory_store"] = rag_chain.memory_store
     globals()["current_dataset_name"] = rag_chain.current_dataset_name

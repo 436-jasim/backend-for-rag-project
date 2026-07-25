@@ -1,3 +1,4 @@
+print("SECURITY MODULE LOADED FROM:", __file__)
 import os
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -14,11 +15,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
-    # Truncate to 72 bytes to prevent bcrypt length limitation errors
+    print("HASH PASSWORD LENGTH:", len(password))
+    print("HASH FUNCTION FILE:", __file__)
     return pwd_context.hash(password[:72])
 
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    print("VERIFY PASSWORD LENGTH:", len(plain_password))
+    print("VERIFY FUNCTION FILE:", __file__)
     try:
         return pwd_context.verify(plain_password[:72], hashed_password)
     except Exception as e:
