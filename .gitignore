@@ -26,10 +26,6 @@ dataset.csv
 tmp-upload-*.txt
 *.tmp
 
-# Persisted vector DBs and index files (FAISS)
-vectordb/
-**/index.faiss
-**/index.pkl
 
 # Editor / OS noise
 .vscode/
