@@ -44,38 +44,78 @@ class UserResponse(BaseModel):
 from shared.database import users_collection, chats_collection, messages_collection
 
 # In your signup route:
+#@router.post("/signup", status_code=status.HTTP_201_CREATED)
+#async def signup(user_data: UserSignup):
+#    existing_user = await users_collection.find_one({"username": user_data.username})
+#    if existing_user:
+#        raise HTTPException(status_code=400, detail="Username already exists.")
+#    # Hash the password
+#    hashed_pwd = hash_password(user_data.password)
+#
+#    # Prepare user document WITHOUT a user_id; we'll set a canonical user_id after insert
+#    new_user = {
+#        "username": user_data.username,
+#        "email": user_data.email,
+#        "password": hashed_pwd
+#    }
+#
+#    # Insert and then assign a canonical user_id equal to the inserted ObjectId string
+#    result = await users_collection.insert_one(new_user)
+#    try:
+#        canonical_id = str(result.inserted_id)
+#        # Persist canonical user_id on the document for later lookups and session ids
+#        await users_collection.update_one({"_id": result.inserted_id}, {"$set": {"user_id": canonical_id}})
+#    except Exception as e:
+#        # If updating the document fails, keep going but log the warning (email/username remain)
+#        print("Warning: failed to set canonical user_id:", e)
+#
+#    try:
+#        send_welcome_email(str(user_data.email), user_data.username)
+#    except Exception as e:
+#        print("Warning: failed to send welcome email:", e)
+#
+#    return {"status": "success", "message": "User registered successfully!"}
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def signup(user_data: UserSignup):
-    existing_user = await users_collection.find_one({"username": user_data.username})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Username already exists.")
-    # Hash the password
-    hashed_pwd = hash_password(user_data.password)
+    print("STEP 1")
 
-    # Prepare user document WITHOUT a user_id; we'll set a canonical user_id after insert
+    existing_user = await users_collection.find_one(
+        {"username": user_data.username}
+    )
+    print("STEP 2")
+
+    if existing_user:
+        raise HTTPException(400, "Username already exists")
+
+    hashed_pwd = hash_password(user_data.password)
+    print("STEP 3")
+
     new_user = {
         "username": user_data.username,
         "email": user_data.email,
-        "password": hashed_pwd
+        "password": hashed_pwd,
     }
 
-    # Insert and then assign a canonical user_id equal to the inserted ObjectId string
     result = await users_collection.insert_one(new_user)
-    try:
-        canonical_id = str(result.inserted_id)
-        # Persist canonical user_id on the document for later lookups and session ids
-        await users_collection.update_one({"_id": result.inserted_id}, {"$set": {"user_id": canonical_id}})
-    except Exception as e:
-        # If updating the document fails, keep going but log the warning (email/username remain)
-        print("Warning: failed to set canonical user_id:", e)
+    print("STEP 4")
+
+    canonical_id = str(result.inserted_id)
+    print("STEP 5")
+
+    await users_collection.update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"user_id": canonical_id}},
+    )
+    print("STEP 6")
 
     try:
-        send_welcome_email(str(user_data.email), user_data.username)
+        send_welcome_email(user_data.email, user_data.username)
     except Exception as e:
-        print("Warning: failed to send welcome email:", e)
+        print("Email error:", e)
 
-    return {"status": "success", "message": "User registered successfully!"}
+    print("STEP 7")
 
+    return {"status": "success"}
 
 @router.post("/login")
 async def login(credentials: UserLogin):
