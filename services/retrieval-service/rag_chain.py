@@ -92,6 +92,22 @@ def load_vectorstore_from_path(vectorstore_path: Path | str) -> FAISS | None:
         return None
 
 
+def load_existing_vectorstore_by_source(source_name: str) -> Path | None:
+    """Load a persisted vectorstore from the local vectordb directory if it exists."""
+    existing_vectorstore_path = _find_existing_vectorstore_for_file(source_name)
+    if not existing_vectorstore_path:
+        return None
+
+    vectorstore = load_vectorstore_from_path(existing_vectorstore_path)
+    if vectorstore is None:
+        return None
+
+    dataset_type = "default" if source_name.lower() == "dataset.csv" else "uploaded"
+    _build_rag_chain_from_vectorstore(vectorstore, source_name, dataset_type)
+    print(f"Restored existing local vectorstore for {source_name} from {existing_vectorstore_path}")
+    return existing_vectorstore_path
+
+
 def process_laptop_answer(answer_text: str) -> str:
     """Removes duplicate laptop-name entries from a retrieved answer while preserving order."""
     if not answer_text:
@@ -319,14 +335,17 @@ Context:
             memory_store[session_id] = ChatMessageHistory()
         return memory_store[session_id]
 
-    conversational_router_chain = RunnableWithMessageHistory(
-        dynamic_router,
-        get_session_history,
-        input_messages_key="input",
-        history_messages_key="history",
-        output_messages_key="answer",
-    )
-    print(f"Successfully loaded {file_name} into the pipeline!\n")
+    if conversational_router_chain is None:
+        conversational_router_chain = RunnableWithMessageHistory(
+            dynamic_router,
+            get_session_history,
+            input_messages_key="input",
+            history_messages_key="history",
+            output_messages_key="answer",
+        )
+        print(f"Successfully initialized conversational router chain for {file_name}!\n")
+    else:
+        print(f"Successfully loaded {file_name} into the pipeline and preserved existing chat history.\n")
 
 
 def initialize_rag_system(file_path: str, source_name: str | None = None):
@@ -341,11 +360,13 @@ def initialize_rag_system(file_path: str, source_name: str | None = None):
     global current_dataset_name, current_dataset_type, default_rag_chain, uploaded_rag_chain, global_rag_chain
     global _last_vectorstore_path, _last_docs, _last_file_name
 
-    memory_store = {}
-    conversational_router_chain = None
-    default_rag_chain = None
-    uploaded_rag_chain = None
-    global_rag_chain = None
+    is_initial_setup = conversational_router_chain is None
+    if is_initial_setup:
+        memory_store = {}
+        conversational_router_chain = None
+        default_rag_chain = None
+        uploaded_rag_chain = None
+        global_rag_chain = None
 
     print(f"Processing file: {file_path}...")
     file_name = Path(file_path).name
@@ -356,15 +377,10 @@ def initialize_rag_system(file_path: str, source_name: str | None = None):
 
     # First, try to load existing embeddings without re-extracting
     use_source_name = source_name or file_name
-    existing_vectorstore_path = _find_existing_vectorstore_for_file(use_source_name)
-    
-    if existing_vectorstore_path:
-        vectorstore = load_vectorstore_from_path(existing_vectorstore_path)
-        if vectorstore is not None:
-            print(f"Loaded existing embeddings from {existing_vectorstore_path}")
-            _last_vectorstore_path = str(existing_vectorstore_path)
-            _build_rag_chain_from_vectorstore(vectorstore, file_name, current_dataset_type)
-            return
+    existing_vectorstore_path = load_existing_vectorstore_by_source(use_source_name)
+    if existing_vectorstore_path is not None:
+        _last_vectorstore_path = str(existing_vectorstore_path)
+        return
 
     # If no existing embeddings, extract text and build new ones
     print(f"No existing embeddings found. Extracting text from {file_path}...")

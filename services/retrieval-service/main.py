@@ -32,20 +32,25 @@ DEFAULT_DATASET_PATH = Path(__file__).resolve().parent.parent.parent / "data" / 
 @app.on_event("startup")
 async def startup_restore_global_context():
     """Attempt to restore previously uploaded context from MongoDB.
-    If nothing is stored there, fall back to the bundled default dataset
-    so the service is immediately usable for laptop queries.
-    
+    If a global upload is active, load it first and then preserve the default
+    dataset embeddings for all chats.
+
     The initialize_rag_system now checks for existing embeddings first
     before extracting and creating new ones."""
     restored = await rag.restore_global_context_from_db()
-    if not restored and DEFAULT_DATASET_PATH.exists():
-        print(f"No persisted context found — initializing default dataset: {DEFAULT_DATASET_PATH}")
+
+    # Ensure default dataset embeddings are always available if present.
+    if DEFAULT_DATASET_PATH.exists():
+        print(f"Loading default dataset embeddings from {DEFAULT_DATASET_PATH}")
         try:
             await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH), DEFAULT_DATASET_PATH.name)
         except Exception as exc:
             print("Warning: Failed to initialize default RAG context on startup:", exc)
     elif not restored:
         print("Warning: No persisted context and default dataset not found. Upload a file to use RAG.")
+
+    if restored:
+        print("Successfully restored global uploaded context and preserved default dataset embeddings.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,9 +93,10 @@ async def retrieve_answer(payload: dict):
             )
 
     if rag.conversational_router_chain is None:
-        restored = await rag.restore_global_context_from_db()
-        if not restored:
-            await asyncio.to_thread(rag.initialize_rag_system, str(DEFAULT_DATASET_PATH), DEFAULT_DATASET_PATH.name)
+        raise HTTPException(
+            status_code=500,
+            detail="RAG system is not initialized yet. Please restart the retrieval service or upload the dataset first.",
+        )
 
     answer = await asyncio.to_thread(rag.rag_answer, message, session_id)
     return {"answer": answer}
