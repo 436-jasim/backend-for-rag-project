@@ -13,7 +13,7 @@ MONGO_URI = os.getenv("MONGODB_URI")
 client = AsyncIOMotorClient(MONGO_URI)
 
 # Database
-db = client["laptop_rag"]
+db = client[os.getenv("DATABASE_NAME")]
 
 # Collections
 users_collection = db["users"]
